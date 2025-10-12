@@ -317,8 +317,3 @@ Edit `.env`:
 CODE_SERVER_WORKSPACE_PATH=~/my-projects
 JUPYTER_WORKSPACE_PATH=./my-notebooks
 ```
-
-## License
-
-MIT License
-
