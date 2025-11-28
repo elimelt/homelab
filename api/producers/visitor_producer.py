@@ -44,8 +44,7 @@ async def join_visitor(
     if event_bus:
         await event_bus.publish({"type": "join", "visitor": visitor_data})
     try:
-        if db.POOL is not None:
-            await db.insert_event("visitor_updates", "join", {"visitor": visitor_data}, visitor_data["connected_at"])
+        await db.insert_event("visitor_updates", "join", {"visitor": visitor_data}, visitor_data["connected_at"])
     except Exception:
         pass
     return visitor_data
@@ -60,11 +59,10 @@ async def leave_visitor(redis_client: redis.Redis, event_bus: EventBus | None, c
     if event_bus:
         await event_bus.publish({"type": "leave", "ip": client_ip})
     try:
-        if db.POOL is not None:
-            from datetime import datetime, timezone
-            await db.insert_event(
-                "visitor_updates", "leave", {"ip": client_ip}, datetime.now(timezone.utc).isoformat()
-            )
+        from datetime import datetime, timezone
+        await db.insert_event(
+            "visitor_updates", "leave", {"ip": client_ip}, datetime.now(timezone.utc).isoformat()
+        )
     except Exception:
         pass
 

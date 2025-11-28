@@ -13,9 +13,10 @@ RUN wget -O GeoLite2-City.mmdb "https://github.com/P3TERX/GeoLite.mmdb/raw/downl
 # Copy application code
 COPY main.py .
 RUN mkdir -p /app/api
-COPY __init__.py bus.py events.py state.py db.py /app/api/
+COPY __init__.py bus.py events.py state.py db.py middleware.py redis_debug.py /app/api/
 COPY controllers /app/api/controllers
 COPY producers /app/api/producers
+COPY agents /app/api/agents
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--no-access-log", "--log-level", "warning"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--no-access-log", "--log-level", "info"]
 

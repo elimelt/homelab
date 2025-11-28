@@ -13,8 +13,6 @@ async def events_history(
     before: Optional[str] = Query(None, description="ISO8601 timestamp; default now"),
     limit: int = Query(100, ge=1, le=500),
 ) -> Dict[str, Any]:
-    if db.POOL is None:
-        return {"error": "Event persistence disabled", "events": []}
     events = await db.fetch_events(topic, type, before, limit)
     next_before = events[-1]["timestamp"] if events else before
     return {"events": events, "next_before": next_before}

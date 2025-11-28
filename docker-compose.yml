@@ -311,10 +311,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - CORS_ORIGINS=${API_CORS_ORIGINS:-http://localhost:3000,https://elimelt.com}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AGENTS=${AGENTS:-5}
+      - AGENT_MIN_SLEEP_SEC=${AGENT_MIN_SLEEP_SEC:-30}
+      - AGENT_MAX_SLEEP_SEC=${AGENT_MAX_SLEEP_SEC:-120}
+      - AGENT_WAKE_PROB=${AGENT_WAKE_PROB:-0.2}
+      - AGENT_WAKE_COOLDOWN_SEC=${AGENT_WAKE_COOLDOWN_SEC:-45}
+      - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-200}
+      - REDIS_POOL_TIMEOUT_SEC=${REDIS_POOL_TIMEOUT_SEC:-5}
+      - REDIS_DEBUG=${REDIS_DEBUG:-0}
+      - REQUEST_DEBUG=${REQUEST_DEBUG:-0}
+      - WS_DEBUG=${WS_DEBUG:-0}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - ENABLE_CHAT_DB=1
+      - ENABLE_AGENT=${ENABLE_AGENT:-1}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-devuser}

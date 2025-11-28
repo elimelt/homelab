@@ -12,11 +12,10 @@ async def get_visitors():
         return {"error": "Redis not connected"}
 
     visitor_keys = await state.redis_client.keys("visitor:*")
-    active_visitors = [
-        json.loads(data)
-        for key in visitor_keys
-        if (data := await state.redis_client.get(key))
-    ]
+    active_visitors = []
+    if visitor_keys:
+        values = await state.redis_client.mget(*visitor_keys)
+        active_visitors = [json.loads(v) for v in values if v]
 
     visit_log = await state.redis_client.lrange("visit_log", 0, 99)
     visits = [json.loads(v) for v in visit_log]
