@@ -310,12 +310,19 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      - CORS_ORIGINS=${API_CORS_ORIGINS:-http://localhost:3000,https://yourdomain.com}
+      - CORS_ORIGINS=${API_CORS_ORIGINS:-http://localhost:3000,https://elimelt.com}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ENABLE_CHAT_DB=1
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-devuser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-devdb}
     depends_on:
       - redis
+      - postgres
     networks:
       - dev_network
 
@@ -326,6 +333,7 @@ volumes:
   grafana_data:
   prometheus_data:
   loki_data:
+
 
 networks:
   dev_network:

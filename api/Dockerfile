@@ -10,7 +10,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN wget -O GeoLite2-City.mmdb "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb" || \
     echo "GeoIP database not available, will use fallback"
 
+# Copy application code
 COPY main.py .
+RUN mkdir -p /app/api
+COPY __init__.py bus.py events.py state.py db.py /app/api/
+COPY controllers /app/api/controllers
+COPY producers /app/api/producers
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--no-access-log", "--log-level", "warning"]
 

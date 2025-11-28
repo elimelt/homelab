@@ -30,3 +30,14 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw
+*.pyzwz

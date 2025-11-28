@@ -1,0 +1,104 @@
+from fastapi import APIRouter
+import subprocess
+import json
+
+from api import state
+
+router = APIRouter()
+
+
+@router.get("/system")
+async def get_system():
+    if state.redis_client:
+        cached = await state.redis_client.get("system_stats")
+        if cached:
+            return json.loads(cached)
+
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}|{{.Status}}|{{.Image}}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
+        if result.returncode != 0:
+            return {"error": "Failed to get container list"}
+
+        container_info = {}
+        for line in result.stdout.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) == 3:
+                name, status, image = parts
+                container_info[name] = {"status": status, "image": image}
+
+        container_names = list(container_info.keys())
+
+        stats_map = {}
+        if container_names:
+            stats_result = subprocess.run(
+                ["docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}"]
+                + container_names,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+            if stats_result.returncode == 0 and stats_result.stdout:
+                for line in stats_result.stdout.strip().split("\n"):
+                    if not line:
+                        continue
+                    parts = line.split("|")
+                    if len(parts) == 4:
+                        try:
+                            name = parts[0]
+                            cpu_percent = float(parts[1].replace("%", ""))
+                            mem_usage = parts[2].split("/")[0].strip()
+
+                            memory_mb = float(mem_usage.replace("MiB", ""))
+                            if "GiB" in mem_usage:
+                                memory_mb = float(mem_usage.replace("GiB", "")) * 1024
+
+                            memory_percent = float(parts[3].replace("%", ""))
+
+                            stats_map[name] = {
+                                "cpu_percent": round(cpu_percent, 2),
+                                "memory_mb": round(memory_mb, 2),
+                                "memory_percent": round(memory_percent, 2),
+                            }
+                        except Exception:
+                            pass
+
+        services = []
+        for name in container_names:
+            info = container_info.get(name, {})
+            stats = stats_map.get(
+                name, {"cpu_percent": 0.0, "memory_mb": 0.0, "memory_percent": 0.0}
+            )
+
+            services.append(
+                {
+                    "name": name,
+                    "status": info.get("status", "unknown"),
+                    "image": info.get("image", "unknown"),
+                    **stats,
+                }
+            )
+
+        response = {
+            "total_containers": len(services),
+            "services": sorted(services, key=lambda x: x["name"]),
+        }
+
+        if state.redis_client:
+            await state.redis_client.setex("system_stats", 5, json.dumps(response))
+
+        return response
+    except subprocess.TimeoutExpired:
+        return {"error": "Docker command timed out"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
