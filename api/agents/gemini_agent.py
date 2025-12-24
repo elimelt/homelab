@@ -78,7 +78,7 @@ def _load_agent_configs() -> List[AgentConfig]:
     max_sleep = int(_env("AGENT_MAX_SLEEP_SEC", "300"))
     max_replies = int(_env("AGENT_MAX_REPLIES", "3"))
     history_hours = int(_env("AGENT_HISTORY_HOURS", "24"))
-    model = _env("AGENT_MODEL", "gemini-2.5-pro")
+    model = _env("AGENT_MODEL", "gemini-2.5-flash")
 
     cfgs: List[AgentConfig] = []
     for i in range(1, num + 1):
