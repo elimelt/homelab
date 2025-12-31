@@ -31,6 +31,66 @@ _logger.propagate = False
 
 _VOTE_PREFIX = "[vote]"
 
+# --- Token Counting ---
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count for a string. Rough approximation: ~4 chars per token."""
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
+
+
+# --- Global Daily Rate Limiter ---
+
+_DAILY_LIMIT_KEY = "agent:daily_request_count"
+_DAILY_LIMIT_DATE_KEY = "agent:daily_request_date"
+
+
+async def _get_daily_request_count() -> int:
+    """Get current daily request count, resetting if date changed."""
+    if state.redis_client is None:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stored_date = await state.redis_client.get(_DAILY_LIMIT_DATE_KEY)
+        if stored_date != today:
+            # New day, reset counter
+            await state.redis_client.set(_DAILY_LIMIT_DATE_KEY, today)
+            await state.redis_client.set(_DAILY_LIMIT_KEY, "0")
+            return 0
+        count = await state.redis_client.get(_DAILY_LIMIT_KEY)
+        return int(count) if count else 0
+    except Exception:
+        return 0
+
+
+async def _increment_daily_request_count() -> int:
+    """Increment and return the new daily request count."""
+    if state.redis_client is None:
+        return 0
+    try:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stored_date = await state.redis_client.get(_DAILY_LIMIT_DATE_KEY)
+        if stored_date != today:
+            await state.redis_client.set(_DAILY_LIMIT_DATE_KEY, today)
+            await state.redis_client.set(_DAILY_LIMIT_KEY, "1")
+            return 1
+        new_count = await state.redis_client.incr(_DAILY_LIMIT_KEY)
+        return int(new_count)
+    except Exception:
+        return 0
+
+
+async def _can_make_request() -> bool:
+    """Check if we're under the daily request limit."""
+    max_daily = int(_env("AGENT_MAX_DAILY_REQUESTS", "20"))
+    current = await _get_daily_request_count()
+    can_proceed = current < max_daily
+    if not can_proceed:
+        _logger.warning("Daily request limit reached: %d/%d", current, max_daily)
+    return can_proceed
+
+
 # --- Data Structures ---
 
 @dataclass
@@ -40,7 +100,7 @@ class AgentConfig:
     min_sleep: int
     max_sleep: int
     max_replies: int
-    history_hours: int
+    history_token_limit: int
     model: str
     persona: Optional[str] = None
 
@@ -53,14 +113,29 @@ def _participants_from_history(history: List[Tuple[str, str, datetime]]) -> List
         counts[sender] = counts.get(sender, 0) + 1
     return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
 
-async def _fetch_recent_messages(channel: str, since: datetime, limit: int) -> List[Tuple[str, str, datetime]]:
+async def _fetch_recent_messages_by_tokens(channel: str, token_limit: int, limit: int = 500) -> List[Tuple[str, str, datetime]]:
+    """Fetch recent messages up to a token limit instead of time-based."""
     rows = await db.fetch_chat_history(channel=channel, before_iso=None, limit=limit)
     out: List[Tuple[str, str, datetime]] = []
+    total_tokens = 0
+
+    # Process in reverse chronological order (most recent first)
     for m in reversed(rows):
         ts = datetime.fromisoformat(m["timestamp"].replace("Z", "+00:00"))
-        if ts >= since:
-            out.append((m["sender"], m["text"], ts))
-    return out
+        text = m.get("text") or ""
+        sender = m.get("sender") or ""
+
+        # Estimate tokens for this message (include sender and timestamp overhead ~30 tokens)
+        msg_tokens = _estimate_tokens(text) + _estimate_tokens(sender) + 30
+
+        if total_tokens + msg_tokens > token_limit:
+            break
+
+        out.append((sender, text, ts))
+        total_tokens += msg_tokens
+
+    # Reverse to get chronological order
+    return list(reversed(out))
 
 def _parse_channels(value: str) -> List[str]:
     return [c.strip() for c in value.split(",") if c.strip()]
@@ -74,10 +149,13 @@ def _load_agent_configs() -> List[AgentConfig]:
     num = int(_env("AGENTS", "3"))
     num = max(1, min(num, 10))
     common_channels = _parse_channels(_env("AGENT_CHANNELS", "general"))
-    min_sleep = int(_env("AGENT_MIN_SLEEP_SEC", "60"))
-    max_sleep = int(_env("AGENT_MAX_SLEEP_SEC", "300"))
-    max_replies = int(_env("AGENT_MAX_REPLIES", "3"))
-    history_hours = int(_env("AGENT_HISTORY_HOURS", "24"))
+    # Increased default sleep times to reduce request frequency (20 requests/day limit)
+    min_sleep = int(_env("AGENT_MIN_SLEEP_SEC", "3600"))  # 1 hour default
+    max_sleep = int(_env("AGENT_MAX_SLEEP_SEC", "7200"))  # 2 hours default
+    # Reduced max replies to 1 to conserve requests
+    max_replies = int(_env("AGENT_MAX_REPLIES", "1"))
+    # Token-based history limit (~10,000 tokens)
+    history_token_limit = int(_env("AGENT_HISTORY_TOKEN_LIMIT", "10000"))
     model = _env("AGENT_MODEL", "gemini-2.5-flash")
 
     cfgs: List[AgentConfig] = []
@@ -91,58 +169,59 @@ def _load_agent_configs() -> List[AgentConfig]:
                 min_sleep=min_sleep,
                 max_sleep=max_sleep,
                 max_replies=max_replies,
-                history_hours=history_hours,
+                history_token_limit=history_token_limit,
                 model=model,
             )
         )
 
     for cfg in cfgs:
         _logger.info(
-            "Configured agent sender=%s channels=%s model=%s sleep=[%ss..%ss] max_replies=%s history=%sh persona=%s",
-            cfg.sender, cfg.channels, cfg.model, cfg.min_sleep, cfg.max_sleep, cfg.max_replies, cfg.history_hours,
+            "Configured agent sender=%s channels=%s model=%s sleep=[%ss..%ss] max_replies=%s history_tokens=%d persona=%s",
+            cfg.sender, cfg.channels, cfg.model, cfg.min_sleep, cfg.max_sleep, cfg.max_replies, cfg.history_token_limit,
             _safe_trunc(cfg.persona, 120),
         )
     return cfgs
 
-async def _run_single_agent_loop(cfg: AgentConfig, stop_event: asyncio.Event) -> None: 
+async def _run_single_agent_loop(cfg: AgentConfig, stop_event: asyncio.Event) -> None:
     min_sleep = max(5, cfg.min_sleep)
     max_sleep = max(min_sleep, cfg.max_sleep)
     max_replies = max(0, min(cfg.max_replies, 5))
 
-    
-    wake_prob = float(_env("AGENT_WAKE_PROB", "0.2"))
-    wake_cooldown_sec = int(_env("AGENT_WAKE_COOLDOWN_SEC", "45"))
-    # salience_threshold, salience_wake_bonus from original are ignored as the prompt approach is now used
+
+    wake_prob = float(_env("AGENT_WAKE_PROB", "0.1"))  # Reduced from 0.2
+    wake_cooldown_sec = int(_env("AGENT_WAKE_COOLDOWN_SEC", "300"))  # Increased from 45
     wake_event = asyncio.Event()
     last_wake_at: datetime | None = None
 
-    
+
     _register_wake_handler(cfg, wake_event, wake_prob, wake_cooldown_sec, lambda: last_wake_at)
 
     while not stop_event.is_set():
         woke = await _wait_for_wake_or_timeout(stop_event, wake_event, random.randint(min_sleep, max_sleep))
         if woke is None:
-            break  
+            break
 
         if state.event_bus is None:
             _logger.debug("[%s] Skipping session; event_bus not ready", cfg.sender)
             continue
 
-        channel = random.choice(cfg.channels)
+        # Check global daily rate limit before proceeding
+        if not await _can_make_request():
+            _logger.info("[%s] Skipping session; daily request limit reached", cfg.sender)
+            continue
 
-        
-        history_minutes = int(_env("AGENT_HISTORY_MINUTES", "5"))
-        since = datetime.now(timezone.utc) - timedelta(minutes=history_minutes)
-        _logger.info("[%s] Session channel=%s since=%s", cfg.sender, channel, since.isoformat())
-        
+        channel = random.choice(cfg.channels)
+        _logger.info("[%s] Session channel=%s token_limit=%d", cfg.sender, channel, cfg.history_token_limit)
+
         last_wake_at = datetime.now(timezone.utc)
 
-        n_replies = min(max_replies, 1 + int(random.random() * 2))
+        # Only send 1 reply per session to conserve requests
+        n_replies = min(max_replies, 1)
         if n_replies <= 0:
             continue
 
         for _ in range(n_replies):
-            await _enqueue_generation_job(cfg.sender, channel, cfg.model) 
+            await _enqueue_generation_job(cfg.sender, channel, cfg.model)
         _logger.debug("[%s] Enqueued %s jobs for channel=%s", cfg.sender, n_replies, channel)
 
 
@@ -539,19 +618,21 @@ def _build_system_instruction(channel: str, persona: Optional[str], actors: List
 
 
 def _build_history_contents(history: List[Tuple[str, str, datetime]]) -> List[types.Content]:
+    """Build history contents from already token-limited history."""
     contents: List[types.Content] = []
-    
-    for sender, text, ts in history[-100:]: 
+
+    # History is already token-limited by _fetch_recent_messages_by_tokens
+    for sender, text, ts in history:
         role = "user" if not sender.startswith("agent:") else "model"
         prefixed_text = f"[{ts.astimezone(timezone.utc).isoformat()}] {sender}: {text}"
-        
+
         contents.append(
             types.Content(
                 role=role,
                 parts=[types.Part(text=prefixed_text)]
             )
         )
-    
+
     contents.append(
         types.Content(
             role="user",
@@ -575,44 +656,55 @@ def _sync_generate_content(
 
 _client = genai.Client(api_key=_env("GEMINI_API_KEY", ""))
 
+async def _call_gemini_with_retry(
+    cfg: AgentConfig,
+    contents: List[types.Content],
+    system_instruction: str,
+    call_name: str = "call",
+) -> Optional[types.GenerateContentResponse]:
+    max_retry_sec = int(_env("AGENT_LLM_MAX_RETRY_SEC", "3600"))
+    base_delay = 5
+    elapsed = 0
+    attempt = 0
+    while elapsed < max_retry_sec:
+        try:
+            response = await asyncio.to_thread(
+                _sync_generate_content,
+                _client,
+                cfg.model,
+                contents,
+                types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    tools=ALL_TOOLS,
+                )
+            )
+            return response
+        except APIError as e:
+            if hasattr(e, 'code') and e.code == 429:
+                delay = min(base_delay * (2 ** attempt), max_retry_sec - elapsed, 300)
+                _logger.warning("[%s] %s rate limited, retrying in %.0fs (attempt %d)", cfg.sender, call_name, delay, attempt + 1)
+                await asyncio.sleep(delay)
+                elapsed += delay
+                attempt += 1
+                continue
+            _logger.error("[%s] %s failed: %s", cfg.sender, call_name, e)
+            return None
+        except Exception as e:
+            _logger.exception("[%s] Unexpected error in %s", cfg.sender, call_name)
+            return None
+    _logger.error("[%s] %s exceeded max retry time of %ds", cfg.sender, call_name, max_retry_sec)
+    return None
+
+
 async def _call_gemini_async(cfg: AgentConfig, channel: str, history: List[Tuple[str, str, datetime]]) -> Optional[str]:
     actors = _participants_from_history(history)
     system_instruction = _build_system_instruction(channel, cfg.persona, actors)
     contents = _build_history_contents(history)
-    
-    try:
-        response = await asyncio.to_thread(
-            _sync_generate_content,
-            _client,
-            cfg.model,
-            contents,
-            types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                tools=ALL_TOOLS,
-            )
-        )
-    except Exception as e:
-        _logger.error("Failed to initialize GenAI AsyncClient: %s", e)
-        return None
 
-    
-    
-    _logger.debug(f"[%s] Calling Gemini with history_count={len(contents)}, model={cfg.model}", cfg.sender)
-    
-    try:
-        response = _client.models.generate_content(
-            model=cfg.model,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                tools=ALL_TOOLS,
-            )
-        )
-    except APIError as e:
-        _logger.error("[%s] First Gemini call failed: %s", cfg.sender, e)
-        return None
-    except Exception as e:
-        _logger.exception("[%s] Unexpected error in first Gemini call", cfg.sender)
+    _logger.debug("[%s] Calling Gemini with history_count=%d, model=%s", cfg.sender, len(contents), cfg.model)
+
+    response = await _call_gemini_with_retry(cfg, contents, system_instruction, "first Gemini call")
+    if response is None:
         return None
 
     if response.function_calls:
@@ -647,26 +739,20 @@ async def _call_gemini_async(cfg: AgentConfig, channel: str, history: List[Tuple
         contents.append(response.candidates[0].content)
         contents.append(
             types.Content(
-                role="tool", 
+                role="tool",
                 parts=tool_results
             )
         )
-        
-        _logger.debug("[%s] Second call to Gemini with tool results.", cfg.sender)
-        try:
-            response = _client.models.generate_content(
-                model=cfg.model,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    tools=ALL_TOOLS,
-                )
-            )
-        except APIError as e:
-            _logger.error("[%s] Second Gemini call failed: %s", cfg.sender, e)
+
+        # Check rate limit before second call (tool results also consume a request)
+        if not await _can_make_request():
+            _logger.warning("[%s] Daily limit reached before second call; skipping tool response", cfg.sender)
             return None
-        except Exception as e:
-            _logger.exception("[%s] Unexpected error in second Gemini call", cfg.sender)
+
+        new_count = await _increment_daily_request_count()
+        _logger.debug("[%s] Second call to Gemini with tool results (request #%d).", cfg.sender, new_count)
+        response = await _call_gemini_with_retry(cfg, contents, system_instruction, "second Gemini call")
+        if response is None:
             return None
 
 
@@ -723,22 +809,31 @@ async def _generation_worker(channels: List[str], stop_event: asyncio.Event) -> 
                 if not await _can_speak_now(sender):
                     _logger.debug("[%s] Skipping message due to minimum turn gap.", sender)
                     continue
-                
-                minutes = int(_env("AGENT_HISTORY_MINUTES", "5"))
-                since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
-                history = await _fetch_recent_messages(channel, since, 2000)
-                
+
+                # Check global daily rate limit before making API call
+                if not await _can_make_request():
+                    _logger.info("[%s] Skipping generation; daily request limit reached", sender)
+                    continue
+
+                # Use token-based history fetching instead of time-based
+                history = await _fetch_recent_messages_by_tokens(channel, cfg.history_token_limit)
+
+                # Increment the daily request counter BEFORE making the API call
+                new_count = await _increment_daily_request_count()
+                _logger.info("[%s] Making API request %d for channel=%s with %d messages",
+                            sender, new_count, channel, len(history))
+
                 text = await _call_gemini_async(cfg, channel, history)
 
                 if not text:
                     continue
-                
+
                 norm = _normalize_text(text)
                 h = hashlib.sha1(norm.encode("utf-8")).hexdigest()
                 if not await _remember_hash_and_check(channel, h):
                     _logger.debug("[%s] Skipping message due to recent hash match.", sender)
                     continue
-                
+
                 event = build_chat_message(channel=channel, sender=sender, text=text)
                 await publish_chat_message(state.event_bus, channel, event)
                 await _mark_spoke(sender)

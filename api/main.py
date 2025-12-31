@@ -2,6 +2,11 @@ import os
 import logging
 import redis.asyncio as redis
 import geoip2.database
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+)
 from typing import Optional
 from collections.abc import AsyncIterator
 from fastapi import FastAPI
@@ -25,12 +30,16 @@ import asyncio
 from api.middleware import HTTPLogMiddleware
 from api.redis_debug import wrap_redis_client
 from api.controllers.chat_admin import router as chat_admin_router
+from api.controllers.when2meet import router as when2meet_router
 
 app = FastAPI(title="DevStack Public API", version="1.0.0")
 
 cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
 cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
-cors_regex = os.getenv("CORS_ORIGINS_REGEX", "").strip() or None
+cors_regex_env = os.getenv("CORS_ORIGINS_REGEX", "").strip()
+# Allow elimelt.com and any subdomain (http and https)
+elimelt_subdomain_regex = r"https?://([a-zA-Z0-9-]+\.)?elimelt\.com"
+cors_regex = cors_regex_env if cors_regex_env else elimelt_subdomain_regex
 allow_credentials = cors_origins != ["*"] and cors_regex is None
 
 app.add_middleware(
@@ -143,4 +152,4 @@ app.include_router(ws_chat_router)
 app.include_router(chat_history_router)
 app.include_router(events_history_router)
 app.include_router(chat_admin_router)
-
+app.include_router(when2meet_router, prefix="/w2m")

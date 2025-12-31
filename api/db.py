@@ -1,4 +1,7 @@
 import os
+import secrets
+import string
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
@@ -59,6 +62,31 @@ async def _ensure_schema() -> None:
             await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_chat_message_id ON chat_messages (message_id) WHERE message_id IS NOT NULL;")
         except Exception:
             pass
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS w2m_events (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                dates JSONB NOT NULL,
+                time_slots JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                creator_name TEXT
+            );
+            CREATE TABLE IF NOT EXISTS w2m_availabilities (
+                id BIGSERIAL PRIMARY KEY,
+                event_id TEXT NOT NULL REFERENCES w2m_events(id) ON DELETE CASCADE,
+                participant_name TEXT NOT NULL,
+                available_slots JSONB NOT NULL,
+                password_hash TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                UNIQUE (event_id, participant_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_w2m_avail_event ON w2m_availabilities (event_id);
+            ALTER TABLE w2m_availabilities ADD COLUMN IF NOT EXISTS password_hash TEXT;
+            """
+        )
 
 
 async def insert_chat_message(channel: str, sender: str, text: str, ts_iso: str, message_id: Optional[str] = None, reply_to: Optional[str] = None) -> None:
@@ -198,3 +226,120 @@ async def soft_delete_chat_history(channel: Optional[str] = None, before_iso: Op
         return count
 
 
+def _generate_event_id(length: int = 10) -> str:
+    chars = string.ascii_lowercase + string.digits
+    return ''.join(secrets.choice(chars) for _ in range(length))
+
+
+async def w2m_create_event(
+    name: str,
+    dates: List[str],
+    time_slots: List[str],
+    description: Optional[str] = None,
+    creator_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    dsn = _dsn_from_env()
+    now = datetime.now(timezone.utc)
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        for _ in range(10):
+            event_id = _generate_event_id()
+            try:
+                await conn.execute(
+                    """INSERT INTO w2m_events (id, name, description, dates, time_slots, created_at, creator_name)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (event_id, name, description, json.dumps(dates), json.dumps(time_slots), now, creator_name),
+                )
+                return {
+                    "id": event_id,
+                    "name": name,
+                    "description": description,
+                    "dates": dates,
+                    "time_slots": time_slots,
+                    "created_at": now.isoformat(),
+                    "creator_name": creator_name,
+                }
+            except pg_errors.UniqueViolation:
+                continue
+        raise RuntimeError("Failed to generate unique event ID")
+
+
+async def w2m_get_event(event_id: str) -> Optional[Dict[str, Any]]:
+    dsn = _dsn_from_env()
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        rows = await conn.execute(
+            "SELECT id, name, description, dates, time_slots, created_at, creator_name FROM w2m_events WHERE id = %s",
+            (event_id,),
+        )
+        row = await rows.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "name": row[1],
+            "description": row[2],
+            "dates": row[3],
+            "time_slots": row[4],
+            "created_at": row[5].astimezone(timezone.utc).isoformat(),
+            "creator_name": row[6],
+        }
+
+
+async def w2m_get_availabilities(event_id: str) -> List[Dict[str, Any]]:
+    dsn = _dsn_from_env()
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        rows = await conn.execute(
+            "SELECT participant_name, available_slots, created_at, updated_at FROM w2m_availabilities WHERE event_id = %s",
+            (event_id,),
+        )
+        result = []
+        async for row in rows:
+            result.append({
+                "participant_name": row[0],
+                "available_slots": row[1],
+                "created_at": row[2].astimezone(timezone.utc).isoformat(),
+                "updated_at": row[3].astimezone(timezone.utc).isoformat(),
+            })
+        return result
+
+
+async def w2m_get_availability(event_id: str, participant_name: str) -> Optional[Dict[str, Any]]:
+    dsn = _dsn_from_env()
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        row = await (await conn.execute(
+            "SELECT available_slots, password_hash, created_at, updated_at FROM w2m_availabilities WHERE event_id = %s AND participant_name = %s",
+            (event_id, participant_name),
+        )).fetchone()
+        if not row:
+            return None
+        return {
+            "available_slots": row[0],
+            "password_hash": row[1],
+            "created_at": row[2].astimezone(timezone.utc).isoformat(),
+            "updated_at": row[3].astimezone(timezone.utc).isoformat(),
+        }
+
+
+async def w2m_upsert_availability(event_id: str, participant_name: str, available_slots: List[str], password_hash: Optional[str] = None) -> Dict[str, Any]:
+    dsn = _dsn_from_env()
+    now = datetime.now(timezone.utc)
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
+        if password_hash is not None:
+            await conn.execute(
+                """INSERT INTO w2m_availabilities (event_id, participant_name, available_slots, password_hash, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (event_id, participant_name) DO UPDATE SET available_slots = EXCLUDED.available_slots, updated_at = EXCLUDED.updated_at""",
+                (event_id, participant_name, json.dumps(available_slots), password_hash, now, now),
+            )
+        else:
+            await conn.execute(
+                """INSERT INTO w2m_availabilities (event_id, participant_name, available_slots, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (event_id, participant_name) DO UPDATE SET available_slots = EXCLUDED.available_slots, updated_at = EXCLUDED.updated_at""",
+                (event_id, participant_name, json.dumps(available_slots), now, now),
+            )
+        return {
+            "event_id": event_id,
+            "participant_name": participant_name,
+            "available_slots": available_slots,
+            "updated_at": now.isoformat(),
+        }
