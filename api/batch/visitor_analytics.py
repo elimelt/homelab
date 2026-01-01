@@ -259,6 +259,63 @@ async def run_batch_job(days: int = 1, dry_run: bool = False) -> dict[str, Any]:
     return summary
 
 
+async def start_analytics_scheduler(stop_event: asyncio.Event) -> list[asyncio.Task]:
+    """
+    Start the visitor analytics scheduler as a background task.
+
+    The scheduler runs the batch job at a configurable interval (default: daily).
+    It can be configured via environment variables:
+        - ANALYTICS_INTERVAL_HOURS: Hours between runs (default: 24)
+        - ANALYTICS_INITIAL_DELAY_SEC: Seconds to wait before first run (default: 60)
+        - ANALYTICS_DAYS: Number of days to process each run (default: 1)
+
+    Args:
+        stop_event: Event to signal shutdown.
+
+    Returns:
+        List containing the scheduler task.
+    """
+
+    async def _scheduler_loop() -> None:
+        interval_hours = int(os.getenv("ANALYTICS_INTERVAL_HOURS", "24"))
+        initial_delay = int(os.getenv("ANALYTICS_INITIAL_DELAY_SEC", "60"))
+        days_to_process = int(os.getenv("ANALYTICS_DAYS", "1"))
+        interval_seconds = interval_hours * 3600
+
+        logger.info(
+            "Visitor analytics scheduler started (interval=%dh, initial_delay=%ds, days=%d)",
+            interval_hours,
+            initial_delay,
+            days_to_process,
+        )
+
+        # Initial delay before first run
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=initial_delay)
+            return  # stop_event was set
+        except asyncio.TimeoutError:
+            pass
+
+        while not stop_event.is_set():
+            try:
+                logger.info("Running scheduled visitor analytics batch job")
+                await run_batch_job(days=days_to_process, dry_run=False)
+            except Exception:
+                logger.exception("Scheduled analytics batch job failed")
+
+            # Wait for next interval or stop
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+                break  # stop_event was set
+            except asyncio.TimeoutError:
+                pass  # Normal timeout, run again
+
+        logger.info("Visitor analytics scheduler stopped")
+
+    task = asyncio.create_task(_scheduler_loop())
+    return [task]
+
+
 def main() -> None:
     """CLI entry point for the batch job."""
     parser = argparse.ArgumentParser(

@@ -18,6 +18,7 @@ from redis.asyncio import BlockingConnectionPool as RedisConnectionPool
 
 from api import db, state
 from api.agents.gemini_agent import start_agents
+from api.batch.visitor_analytics import start_analytics_scheduler
 from api.bus import EventBus
 from api.controllers.cache import router as cache_router
 from api.controllers.chat_history import router as chat_history_router
@@ -112,6 +113,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         stop_event = asyncio.Event()
         agent_tasks = await start_agents(stop_event)
 
+    # Start visitor analytics scheduler
+    analytics_tasks: list[asyncio.Task] = []
+    enable_analytics = os.getenv("ENABLE_ANALYTICS_SCHEDULER", "1") == "1"
+    if enable_analytics and enable_db:
+        if stop_event is None:
+            stop_event = asyncio.Event()
+        analytics_tasks = await start_analytics_scheduler(stop_event)
+
     try:
         yield
     finally:
@@ -123,6 +132,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 )
             except Exception:
                 for t in agent_tasks:
+                    t.cancel()
+        if analytics_tasks and stop_event:
+            stop_event.set()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*analytics_tasks, return_exceptions=True), timeout=5
+                )
+            except Exception:
+                for t in analytics_tasks:
                     t.cancel()
         if enable_db:
             try:
