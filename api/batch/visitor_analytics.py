@@ -278,23 +278,14 @@ async def start_analytics_scheduler(stop_event: asyncio.Event) -> list[asyncio.T
 
     async def _scheduler_loop() -> None:
         interval_hours = int(os.getenv("ANALYTICS_INTERVAL_HOURS", "24"))
-        initial_delay = int(os.getenv("ANALYTICS_INITIAL_DELAY_SEC", "60"))
         days_to_process = int(os.getenv("ANALYTICS_DAYS", "1"))
         interval_seconds = interval_hours * 3600
 
         logger.info(
-            "Visitor analytics scheduler started (interval=%dh, initial_delay=%ds, days=%d)",
+            "Visitor analytics scheduler started (interval=%dh, days=%d)",
             interval_hours,
-            initial_delay,
             days_to_process,
         )
-
-        # Initial delay before first run
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=initial_delay)
-            return  # stop_event was set
-        except asyncio.TimeoutError:
-            pass
 
         while not stop_event.is_set():
             try:
