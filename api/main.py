@@ -20,12 +20,12 @@ from api import db, state
 from api.agents.gemini_agent import start_agents
 from api.bus import EventBus
 from api.controllers.cache import router as cache_router
-from api.controllers.chat_admin import router as chat_admin_router
 from api.controllers.chat_history import router as chat_history_router
 from api.controllers.events_history import router as events_history_router
 from api.controllers.example import router as example_router
 from api.controllers.health import router as health_router
 from api.controllers.system import router as system_router
+from api.controllers.visitor_analytics import router as visitor_analytics_router
 from api.controllers.visitors import router as visitors_router
 from api.controllers.when2meet import router as when2meet_router
 from api.controllers.ws_chat import router as ws_chat_router
@@ -155,5 +155,5 @@ app.include_router(ws_visitors_router)
 app.include_router(ws_chat_router)
 app.include_router(chat_history_router)
 app.include_router(events_history_router)
-app.include_router(chat_admin_router)
+app.include_router(visitor_analytics_router)
 app.include_router(when2meet_router, prefix="/w2m")

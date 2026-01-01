@@ -17,6 +17,7 @@ COPY __init__.py bus.py events.py state.py db.py middleware.py redis_debug.py /a
 COPY controllers /app/api/controllers
 COPY producers /app/api/producers
 COPY agents /app/api/agents
+COPY batch /app/api/batch
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--no-access-log", "--log-level", "info"]
 

@@ -537,10 +537,49 @@ TOOL_QUERY_CHAT = types.Tool(
     ]
 )
 
+TOOL_VISITOR_ANALYTICS = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="tool_visitor_analytics",
+            description="Query visitor analytics and statistics. Returns metrics about site visitors including visit counts, session durations, recurring visitor status, and visit frequency.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "visitor_ip": types.Schema(
+                        type=types.Type.STRING,
+                        description="Optional: filter by specific visitor IP address.",
+                    ),
+                    "start_date": types.Schema(
+                        type=types.Type.STRING,
+                        description="Optional: start date filter (ISO8601 format, e.g., '2025-01-01').",
+                    ),
+                    "end_date": types.Schema(
+                        type=types.Type.STRING,
+                        description="Optional: end date filter (ISO8601 format, e.g., '2025-01-31').",
+                    ),
+                    "recurring_only": types.Schema(
+                        type=types.Type.BOOLEAN,
+                        description="Optional: filter to recurring visitors only (true) or non-recurring only (false).",
+                    ),
+                    "summary": types.Schema(
+                        type=types.Type.BOOLEAN,
+                        description="If true, return aggregate summary instead of individual records (default: false).",
+                    ),
+                    "limit": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="Maximum number of records to return (default 50).",
+                    ),
+                },
+            ),
+        )
+    ]
+)
+
 ALL_TOOLS: list[types.Tool] = [
     TOOL_URL_FETCH,
     TOOL_SEARCH_EVENTS,
     TOOL_QUERY_CHAT,
+    TOOL_VISITOR_ANALYTICS,
 ]
 
 
@@ -657,6 +696,43 @@ async def _tool_query_chat(args: dict[str, object]) -> str:
 
 
 TOOL_MAP["tool_query_chat"] = _tool_query_chat
+
+
+async def _tool_visitor_analytics(args: dict[str, object]) -> str:
+    """Query visitor analytics from the database."""
+    visitor_ip = args.get("visitor_ip")
+    start_date = args.get("start_date")
+    end_date = args.get("end_date")
+    recurring_only = args.get("recurring_only")
+    summary_mode = args.get("summary", False)
+    limit = int(args.get("limit") or 50)
+
+    try:
+        if summary_mode:
+            # Return aggregate summary
+            result = await db.get_visitor_analytics_summary(
+                start_date=str(start_date) if start_date else None,
+                end_date=str(end_date) if end_date else None,
+            )
+            out = {"type": "summary", "data": result}
+        else:
+            # Return individual visitor records
+            rows = await db.fetch_visitor_stats(
+                visitor_ip=str(visitor_ip) if visitor_ip else None,
+                start_date=str(start_date) if start_date else None,
+                end_date=str(end_date) if end_date else None,
+                is_recurring=bool(recurring_only) if recurring_only is not None else None,
+                limit=limit,
+            )
+            out = {"type": "visitors", "count": len(rows), "visitors": rows}
+
+        return json.dumps(out)[: int(_env("AGENT_TOOL_MAX_OUTPUT_CHARS", "2000"))]
+    except Exception as e:
+        _logger.error("tool_visitor_analytics failed: %s", e)
+        return f"ERROR: {e!r}"
+
+
+TOOL_MAP["tool_visitor_analytics"] = _tool_visitor_analytics
 
 
 def _build_system_instruction(
