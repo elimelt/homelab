@@ -67,9 +67,17 @@ async def get_system() -> dict[str, Any]:
                             cpu_percent = float(parts[1].replace("%", ""))
                             mem_usage = parts[2].split("/")[0].strip()
 
-                            memory_mb = float(mem_usage.replace("MiB", ""))
+                            # Parse memory with proper unit handling
                             if "GiB" in mem_usage:
-                                memory_mb = float(mem_usage.replace("GiB", "")) * 1024
+                                memory_mb = float(mem_usage.replace("GiB", "").strip()) * 1024
+                            elif "MiB" in mem_usage:
+                                memory_mb = float(mem_usage.replace("MiB", "").strip())
+                            elif "KiB" in mem_usage:
+                                memory_mb = float(mem_usage.replace("KiB", "").strip()) / 1024
+                            elif "B" in mem_usage:
+                                memory_mb = float(mem_usage.replace("B", "").strip()) / (1024 * 1024)
+                            else:
+                                memory_mb = 0.0
 
                             memory_percent = float(parts[3].replace("%", ""))
 

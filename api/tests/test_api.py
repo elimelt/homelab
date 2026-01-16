@@ -75,3 +75,37 @@ def test_system_with_mocked_subprocess(client, monkeypatch):
     assert api_service["cpu_percent"] == 12.3
     assert api_service["memory_mb"] == 50.0
     assert api_service["memory_percent"] == 5.0
+
+
+def test_system_gib_memory_parsing(client, monkeypatch):
+    """Test that containers using GiB of memory are parsed correctly."""
+    class FakeCompleted:
+        def __init__(self, returncode, stdout):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = ""
+
+    def fake_run(args, check=False, capture_output=False, text=False, timeout=None):
+        if args[:2] == ["docker", "ps"]:
+            return FakeCompleted(0, "internal-api|Up 4 days|devstack-internal-api\nredis|Up 4 days|redis:7")
+        if args[:2] == ["docker", "stats"]:
+            return FakeCompleted(
+                0,
+                "internal-api|0.5%|17.2GiB / 96.0GiB|17.92%\nredis|0.27%|25.03MiB / 96.0GiB|0.03%",
+            )
+        return FakeCompleted(1, "")
+
+    monkeypatch.setattr(system_module.subprocess, "run", fake_run)
+
+    res = client.get("/system")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_containers"] == 2
+
+    internal_api = next(s for s in data["services"] if s["name"] == "internal-api")
+    assert internal_api["cpu_percent"] == 0.5
+    assert internal_api["memory_mb"] == 17.2 * 1024  # 17612.8 MB
+    assert internal_api["memory_percent"] == 17.92
+
+    redis_service = next(s for s in data["services"] if s["name"] == "redis")
+    assert redis_service["memory_mb"] == 25.03
