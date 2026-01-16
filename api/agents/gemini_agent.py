@@ -679,7 +679,7 @@ async def _tool_search_events(args: dict[str, object]) -> str:
     try:
         rows = await db.fetch_events(
             topic=str(topic) if topic else None,
-            type=str(typ) if typ else None,
+            event_type=str(typ) if typ else None,
             before_iso=None,
             limit=limit,
         )
