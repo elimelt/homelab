@@ -618,11 +618,67 @@ TOOL_VISITOR_ANALYTICS = types.Tool(
     ]
 )
 
+TOOL_SEARCH_NOTES = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="tool_search_notes",
+            description="Search the knowledge base of notes and documentation. Returns relevant documents matching the query with titles, descriptions, categories, and relevance scores. Use this to find information on specific topics.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(
+                        type=types.Type.STRING,
+                        description="The search query to find relevant notes (e.g., 'machine learning', 'kubernetes deployment').",
+                    ),
+                    "mode": types.Schema(
+                        type=types.Type.STRING,
+                        description="Search mode: 'fulltext' (keyword matching), 'semantic' (meaning-based), or 'hybrid' (combined). Default: 'hybrid'.",
+                    ),
+                    "limit": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="Maximum number of results to return (default 10, max 20).",
+                    ),
+                    "category": types.Schema(
+                        type=types.Type.STRING,
+                        description="Optional: filter by category name (e.g., 'programming', 'devops').",
+                    ),
+                    "tags": types.Schema(
+                        type=types.Type.STRING,
+                        description="Optional: comma-separated tags to filter by (e.g., 'python,tutorial').",
+                    ),
+                },
+                required=["query"],
+            ),
+        )
+    ]
+)
+
+TOOL_GET_NOTE = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="tool_get_note",
+            description="Retrieve the full markdown content of a specific note by its document ID. Use this after searching to read the complete content of a relevant document.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "doc_id": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The document ID to retrieve (obtained from search results).",
+                    ),
+                },
+                required=["doc_id"],
+            ),
+        )
+    ]
+)
+
 ALL_TOOLS: list[types.Tool] = [
     TOOL_URL_FETCH,
     TOOL_SEARCH_EVENTS,
     TOOL_QUERY_CHAT,
     TOOL_VISITOR_ANALYTICS,
+    TOOL_SEARCH_NOTES,
+    TOOL_GET_NOTE,
 ]
 
 
@@ -775,6 +831,140 @@ async def _tool_visitor_analytics(args: dict[str, object]) -> str:
 TOOL_MAP["tool_visitor_analytics"] = _tool_visitor_analytics
 
 
+async def _tool_search_notes(args: dict[str, object]) -> str:
+    query = str(args.get("query") or "")
+    if not query:
+        return "ERROR: query parameter is required"
+
+    mode = str(args.get("mode") or "hybrid").lower()
+    if mode not in ("fulltext", "semantic", "hybrid"):
+        mode = "hybrid"
+
+    limit = min(int(args.get("limit") or 10), 20)
+    category = args.get("category")
+    tags = args.get("tags")
+
+    try:
+        category_id = None
+        if category:
+            cat = await db.notes_get_category_by_name(str(category))
+            if cat:
+                category_id = cat["id"]
+
+        tag_ids: list[int] | None = None
+        if tags:
+            tag_names = [t.strip() for t in str(tags).split(",") if t.strip()]
+            tag_ids = []
+            for tag_name in tag_names:
+                tag_obj = await db.notes_get_tag_by_name(tag_name)
+                if tag_obj:
+                    tag_ids.append(tag_obj["id"])
+
+        results: list[dict] = []
+        if mode == "fulltext":
+            results = await db.notes_fulltext_search(
+                query=query, limit=limit, offset=0, category_id=category_id, tag_ids=tag_ids
+            )
+        elif mode == "semantic":
+            try:
+                from api.notes_embeddings import generate_query_embedding, is_model_available
+
+                if not is_model_available():
+                    results = await db.notes_fulltext_search(
+                        query=query, limit=limit, offset=0, category_id=category_id, tag_ids=tag_ids
+                    )
+                else:
+                    query_embedding = generate_query_embedding(query)
+                    results = await db.notes_vector_search(
+                        embedding=query_embedding, limit=limit, offset=0,
+                        category_id=category_id, tag_ids=tag_ids
+                    )
+            except ImportError:
+                results = await db.notes_fulltext_search(
+                    query=query, limit=limit, offset=0, category_id=category_id, tag_ids=tag_ids
+                )
+        else:
+            fts_results = await db.notes_fulltext_search(
+                query=query, limit=limit + 10, offset=0, category_id=category_id, tag_ids=tag_ids
+            )
+            results = fts_results[:limit]
+
+        if not results:
+            return f"No notes found matching query: '{query}'"
+
+        lines = [f"Found {len(results)} notes matching '{query}':", ""]
+        for i, doc in enumerate(results, 1):
+            title = doc.get("title") or "Untitled"
+            doc_id = doc.get("id", "?")
+            category_name = doc.get("category") or "uncategorized"
+            description = doc.get("description") or ""
+            tags_list = doc.get("tags", [])
+            rank = doc.get("rank") or doc.get("similarity") or 0
+
+            lines.append(f"{i}. **{title}** (ID: {doc_id})")
+            lines.append(f"   Category: {category_name}")
+            if tags_list:
+                lines.append(f"   Tags: {', '.join(tags_list)}")
+            if description:
+                desc_short = description[:150] + "..." if len(description) > 150 else description
+                lines.append(f"   {desc_short}")
+            if rank:
+                lines.append(f"   Relevance: {rank:.4f}")
+            lines.append("")
+
+        return "\n".join(lines)[: int(_env("AGENT_TOOL_MAX_OUTPUT_CHARS", "3000"))]
+    except Exception as e:
+        _logger.error("tool_search_notes failed: %s", e)
+        return f"ERROR: {e!r}"
+
+
+TOOL_MAP["tool_search_notes"] = _tool_search_notes
+
+
+async def _tool_get_note(args: dict[str, object]) -> str:
+    doc_id = args.get("doc_id")
+    if doc_id is None:
+        return "ERROR: doc_id parameter is required"
+
+    try:
+        doc_id_int = int(doc_id)
+    except (ValueError, TypeError):
+        return f"ERROR: doc_id must be an integer, got: {doc_id}"
+
+    try:
+        document = await db.notes_get_document_by_id(doc_id_int)
+        if not document:
+            return f"ERROR: Note with ID {doc_id_int} not found"
+
+        title = document.get("title") or "Untitled"
+        category = document.get("category") or "uncategorized"
+        tags = document.get("tags", [])
+        content = document.get("content") or ""
+        last_modified = document.get("last_modified") or "unknown"
+
+        lines = [
+            f"# {title}",
+            "",
+            f"**Category:** {category}",
+        ]
+        if tags:
+            lines.append(f"**Tags:** {', '.join(tags)}")
+        lines.append(f"**Last Modified:** {last_modified}")
+        lines.append(f"**Document ID:** {doc_id_int}")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        lines.append(content)
+
+        return "\n".join(lines)[: int(_env("AGENT_TOOL_MAX_OUTPUT_CHARS", "6000"))]
+    except Exception as e:
+        _logger.error("tool_get_note failed: %s", e)
+        return f"ERROR: {e!r}"
+
+
+TOOL_MAP["tool_get_note"] = _tool_get_note
+
+
 def _build_system_instruction(
     channel: str, persona: str | None, actors: list[tuple[str, int]]
 ) -> str:
@@ -816,6 +1006,17 @@ def _build_system_instruction(
         "## COORDINATION",
         "Use [vote] prefix to nominate a leader when coordination is needed (e.g., [vote] agent:name for reason).",
         "Respect role differentiation - if another agent is exploring an angle, take a different one.",
+        "",
+        "## AVAILABLE TOOLS",
+        "You have access to the following tools to gather information:",
+        "- **tool_fetch_url**: Fetch content from a public URL (web pages, text files)",
+        "- **tool_search_events**: Search the system event log for messages by topic or type",
+        "- **tool_query_chat**: Search chat history in a specific channel by keyword",
+        "- **tool_visitor_analytics**: Query visitor statistics and metrics",
+        "- **tool_search_notes**: Search the knowledge base of notes and documentation. Use this to find information on specific topics. Returns titles, descriptions, and relevance scores.",
+        "- **tool_get_note**: Retrieve the full markdown content of a note by its document ID. Use after searching to read complete documents.",
+        "",
+        "Use tools proactively when discussing topics that might be covered in the knowledge base. Search notes to ground your contributions in documented knowledge.",
     ])
 
     if actors:
