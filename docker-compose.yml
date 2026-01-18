@@ -277,6 +277,8 @@ services:
       dockerfile: Dockerfile.internal
     container_name: internal-api
     restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - AUGMENT_API_TOKEN=${AUGMENT_API_TOKEN}
       - AUGMENT_SESSION_AUTH=${AUGMENT_API_TOKEN}
@@ -292,11 +294,24 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-devdb}
       - NOTES_SYNC_SECRET=${NOTES_SYNC_SECRET:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - SANDBOX_ENABLED=${SANDBOX_ENABLED:-1}
+      - SANDBOX_IMAGE=devstack-python-sandbox:latest
+      - SANDBOX_TIMEOUT_SEC=${SANDBOX_TIMEOUT_SEC:-30}
+      - SANDBOX_MEMORY_LIMIT=${SANDBOX_MEMORY_LIMIT:-128m}
     depends_on:
       - redis
       - postgres
+      - python-sandbox
     networks:
       - dev_network
+
+  python-sandbox:
+    build:
+      context: ${API_PATH:-./api}/sandbox
+      dockerfile: Dockerfile
+    image: devstack-python-sandbox:latest
+    container_name: python-sandbox-builder
+    entrypoint: ["echo", "Sandbox image built successfully"]
 
 volumes:
   postgres_data:

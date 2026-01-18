@@ -190,7 +190,48 @@ def get_note(doc_id: int) -> str:
     return _run_async(_get())
 
 
-CUSTOM_TOOLS = [search_notes, get_note]
+def run_python(code: str) -> str:
+    """
+    Execute Python code in a secure sandbox and return the output.
+
+    The sandbox has access to common data science libraries including:
+    numpy, pandas, scipy, sympy, matplotlib, seaborn, scikit-learn,
+    requests, beautifulsoup4, pyyaml, and more.
+
+    Security restrictions:
+    - No network access
+    - No file system access outside sandbox
+    - 30 second execution timeout
+    - 128MB memory limit
+    - Dangerous modules (subprocess, os, etc.) are blocked
+
+    Args:
+        code: Python code to execute. Can be multiple lines.
+
+    Returns:
+        The stdout and stderr output from the code execution, or an error message.
+    """
+    try:
+        from api.sandbox import execute_python, is_sandbox_available
+
+        if not is_sandbox_available():
+            return "ERROR: Python sandbox is not available. The sandbox image may need to be built."
+
+        result, success = execute_python(code, agent_id="augment-agent")
+
+        if success:
+            return result if result else "(no output)"
+        else:
+            return f"Execution failed:\n{result}"
+
+    except ImportError:
+        return "ERROR: Sandbox module not available"
+    except Exception as e:
+        _logger.error("run_python failed: %s", e)
+        return f"ERROR: {e!r}"
+
+
+CUSTOM_TOOLS = [search_notes, get_note, run_python]
 
 
 async def _fetch_recent_messages_by_tokens(
@@ -277,9 +318,10 @@ def _build_prompt(channel: str, history: list[tuple[str, str, datetime]], sender
     lines.append("You have access to these tools to enhance your contributions:")
     lines.append("- **search_notes(query, mode, limit, category, tags)**: Search the knowledge base for relevant documentation and notes")
     lines.append("- **get_note(doc_id)**: Retrieve full content of a specific note by its ID")
+    lines.append("- **run_python(code)**: Execute Python code in a secure sandbox (numpy, pandas, scipy, matplotlib available)")
     lines.append("- **web-search**: Search the web for current information, facts, or research")
     lines.append("- **web-fetch**: Fetch and read content from a specific URL")
-    lines.append("Use these tools proactively when they would add value - reference stored knowledge, cite sources, verify claims, or bring in external information.")
+    lines.append("Use these tools proactively when they would add value - run calculations, reference stored knowledge, cite sources, or verify claims.")
 
     lines.append("\n## RECENT CONVERSATION (oldest first):")
     for msg_sender, text, ts in history[-200:]:

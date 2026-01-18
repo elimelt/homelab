@@ -672,6 +672,25 @@ TOOL_GET_NOTE = types.Tool(
     ]
 )
 
+TOOL_RUN_PYTHON = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="tool_run_python",
+            description="Execute Python code in a secure sandbox and return the output. Available libraries: numpy, pandas, scipy, sympy, matplotlib, seaborn, scikit-learn, requests, beautifulsoup4, pyyaml. Security restrictions: no network access, no file system access, 30s timeout, 128MB memory limit.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "code": types.Schema(
+                        type=types.Type.STRING,
+                        description="The Python code to execute. Can be multiple lines.",
+                    ),
+                },
+                required=["code"],
+            ),
+        )
+    ]
+)
+
 ALL_TOOLS: list[types.Tool] = [
     TOOL_URL_FETCH,
     TOOL_SEARCH_EVENTS,
@@ -679,6 +698,7 @@ ALL_TOOLS: list[types.Tool] = [
     TOOL_VISITOR_ANALYTICS,
     TOOL_SEARCH_NOTES,
     TOOL_GET_NOTE,
+    TOOL_RUN_PYTHON,
 ]
 
 
@@ -965,6 +985,34 @@ async def _tool_get_note(args: dict[str, object]) -> str:
 TOOL_MAP["tool_get_note"] = _tool_get_note
 
 
+async def _tool_run_python(args: dict[str, object]) -> str:
+    code = str(args.get("code") or "")
+    if not code:
+        return "ERROR: code parameter is required"
+
+    try:
+        from api.sandbox import execute_python, is_sandbox_available
+
+        if not is_sandbox_available():
+            return "ERROR: Python sandbox is not available. The sandbox image may need to be built."
+
+        result, success = await asyncio.to_thread(execute_python, code, "gemini-agent")
+
+        if success:
+            return result if result else "(no output)"
+        else:
+            return f"Execution failed:\n{result}"
+
+    except ImportError:
+        return "ERROR: Sandbox module not available"
+    except Exception as e:
+        _logger.error("tool_run_python failed: %s", e)
+        return f"ERROR: {e!r}"
+
+
+TOOL_MAP["tool_run_python"] = _tool_run_python
+
+
 def _build_system_instruction(
     channel: str, persona: str | None, actors: list[tuple[str, int]]
 ) -> str:
@@ -1013,10 +1061,11 @@ def _build_system_instruction(
         "- **tool_search_events**: Search the system event log for messages by topic or type",
         "- **tool_query_chat**: Search chat history in a specific channel by keyword",
         "- **tool_visitor_analytics**: Query visitor statistics and metrics",
-        "- **tool_search_notes**: Search the knowledge base of notes and documentation. Use this to find information on specific topics. Returns titles, descriptions, and relevance scores.",
-        "- **tool_get_note**: Retrieve the full markdown content of a note by its document ID. Use after searching to read complete documents.",
+        "- **tool_search_notes**: Search the knowledge base of notes and documentation",
+        "- **tool_get_note**: Retrieve full markdown content of a note by document ID",
+        "- **tool_run_python**: Execute Python code in a secure sandbox (numpy, pandas, scipy, matplotlib available)",
         "",
-        "Use tools proactively when discussing topics that might be covered in the knowledge base. Search notes to ground your contributions in documented knowledge.",
+        "Use tools proactively - run calculations, search notes, verify claims with code.",
     ])
 
     if actors:
