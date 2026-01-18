@@ -3,6 +3,7 @@ import logging
 import os
 import random
 from datetime import UTC, datetime
+from typing import Any
 
 from api import db, state
 from api.producers.chat_producer import build_chat_message, publish_chat_message
@@ -25,6 +26,171 @@ def _estimate_tokens(text: str) -> int:
     if not text:
         return 0
     return max(1, len(text) // 4)
+
+
+def _run_async(coro: Any) -> Any:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+    return asyncio.run(coro)
+
+
+def search_notes(
+    query: str,
+    mode: str = "hybrid",
+    limit: int = 10,
+    category: str | None = None,
+    tags: str | None = None
+) -> str:
+    """
+    Search the knowledge base of notes and documentation.
+
+    Args:
+        query: The search query to find relevant notes (e.g., 'machine learning', 'kubernetes deployment')
+        mode: Search mode - 'fulltext' (keyword matching), 'semantic' (meaning-based), or 'hybrid' (combined). Default: 'hybrid'
+        limit: Maximum number of results to return (default 10, max 20)
+        category: Filter by category name (optional)
+        tags: Comma-separated tag names to filter by (optional)
+
+    Returns:
+        Formatted search results with document IDs, titles, categories, and descriptions
+    """
+    async def _search() -> str:
+        if not query:
+            return "ERROR: query parameter is required"
+
+        search_mode = mode.lower() if mode else "hybrid"
+        if search_mode not in ("fulltext", "semantic", "hybrid"):
+            search_mode = "hybrid"
+
+        result_limit = min(limit or 10, 20)
+
+        try:
+            category_id = None
+            if category:
+                cat = await db.notes_get_category_by_name(str(category))
+                if cat:
+                    category_id = cat["id"]
+
+            tag_ids: list[int] | None = None
+            if tags:
+                tag_names = [t.strip() for t in str(tags).split(",") if t.strip()]
+                tag_ids = []
+                for tag_name in tag_names:
+                    tag_obj = await db.notes_get_tag_by_name(tag_name)
+                    if tag_obj:
+                        tag_ids.append(tag_obj["id"])
+
+            results: list[dict] = []
+            if search_mode == "fulltext":
+                results = await db.notes_fulltext_search(
+                    query=query, limit=result_limit, offset=0, category_id=category_id, tag_ids=tag_ids
+                )
+            elif search_mode == "semantic":
+                try:
+                    from api.notes_embeddings import generate_query_embedding, is_model_available
+                    if not is_model_available():
+                        results = await db.notes_fulltext_search(
+                            query=query, limit=result_limit, offset=0, category_id=category_id, tag_ids=tag_ids
+                        )
+                    else:
+                        query_embedding = generate_query_embedding(query)
+                        results = await db.notes_vector_search(
+                            embedding=query_embedding, limit=result_limit, offset=0,
+                            category_id=category_id, tag_ids=tag_ids
+                        )
+                except ImportError:
+                    results = await db.notes_fulltext_search(
+                        query=query, limit=result_limit, offset=0, category_id=category_id, tag_ids=tag_ids
+                    )
+            else:
+                fts_results = await db.notes_fulltext_search(
+                    query=query, limit=result_limit + 10, offset=0, category_id=category_id, tag_ids=tag_ids
+                )
+                results = fts_results[:result_limit]
+
+            if not results:
+                return f"No notes found matching query: '{query}'"
+
+            lines = [f"Found {len(results)} notes matching '{query}':", ""]
+            for doc in results:
+                doc_id = doc.get("id")
+                title = doc.get("title") or "Untitled"
+                cat_name = doc.get("category") or "uncategorized"
+                doc_tags = doc.get("tags") or []
+                description = doc.get("description") or ""
+                rank = doc.get("rank")
+
+                lines.append(f"**[{doc_id}] {title}**")
+                lines.append(f"  Category: {cat_name}")
+                if doc_tags:
+                    lines.append(f"  Tags: {', '.join(doc_tags)}")
+                if description:
+                    lines.append(f"  {description[:200]}...")
+                if rank is not None:
+                    lines.append(f"  Relevance: {rank:.3f}")
+                lines.append("")
+
+            lines.append("Use get_note(doc_id) to retrieve full content of any document.")
+            return "\n".join(lines)[:6000]
+        except Exception as e:
+            _logger.error("search_notes failed: %s", e)
+            return f"ERROR: {e!r}"
+
+    return _run_async(_search())
+
+
+def get_note(doc_id: int) -> str:
+    """
+    Retrieve the full markdown content of a specific note by its document ID.
+
+    Args:
+        doc_id: The document ID to retrieve (obtained from search_notes results)
+
+    Returns:
+        The full note content including title, category, tags, and markdown body
+    """
+    async def _get() -> str:
+        try:
+            document = await db.notes_get_document_by_id(doc_id)
+            if not document:
+                return f"ERROR: Note with ID {doc_id} not found"
+
+            title = document.get("title") or "Untitled"
+            category = document.get("category") or "uncategorized"
+            doc_tags = document.get("tags", [])
+            content = document.get("content") or ""
+            last_modified = document.get("last_modified") or "unknown"
+
+            lines = [
+                f"# {title}",
+                "",
+                f"**Category:** {category}",
+            ]
+            if doc_tags:
+                lines.append(f"**Tags:** {', '.join(doc_tags)}")
+            lines.append(f"**Last Modified:** {last_modified}")
+            lines.append(f"**Document ID:** {doc_id}")
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+            lines.append(content)
+
+            return "\n".join(lines)[:6000]
+        except Exception as e:
+            _logger.error("get_note failed: %s", e)
+            return f"ERROR: {e!r}"
+
+    return _run_async(_get())
+
+
+CUSTOM_TOOLS = [search_notes, get_note]
 
 
 async def _fetch_recent_messages_by_tokens(
@@ -109,9 +275,11 @@ def _build_prompt(channel: str, history: list[tuple[str, str, datetime]], sender
 
     lines.append("\n## AVAILABLE TOOLS")
     lines.append("You have access to these tools to enhance your contributions:")
+    lines.append("- **search_notes(query, mode, limit, category, tags)**: Search the knowledge base for relevant documentation and notes")
+    lines.append("- **get_note(doc_id)**: Retrieve full content of a specific note by its ID")
     lines.append("- **web-search**: Search the web for current information, facts, or research")
     lines.append("- **web-fetch**: Fetch and read content from a specific URL")
-    lines.append("Use these tools proactively when they would add value - cite sources, verify claims, or bring in external knowledge.")
+    lines.append("Use these tools proactively when they would add value - reference stored knowledge, cite sources, verify claims, or bring in external information.")
 
     lines.append("\n## RECENT CONVERSATION (oldest first):")
     for msg_sender, text, ts in history[-200:]:
@@ -212,7 +380,10 @@ _UNSAFE_TOOLS = [
 def _call_augment_sync(api_token: str, model: str, prompt: str) -> str | None:
     try:
         from auggie_sdk import Auggie
-        _logger.debug("Creating Auggie client with model=%s, enabled tools: web-search, web-fetch", model)
+        _logger.debug(
+            "Creating Auggie client with model=%s, custom tools: %s, sdk tools: web-search, web-fetch",
+            model, [f.__name__ for f in CUSTOM_TOOLS]
+        )
         client = Auggie(
             model=model,
             api_key=api_token,
@@ -220,7 +391,7 @@ def _call_augment_sync(api_token: str, model: str, prompt: str) -> str | None:
             removed_tools=_UNSAFE_TOOLS,
         )
         _logger.debug("Calling Auggie.run with prompt len=%d", len(prompt))
-        response = client.run(prompt, return_type=str)
+        response = client.run(prompt, return_type=str, functions=CUSTOM_TOOLS)
         _logger.debug("Auggie response: %s", response[:200] if response else None)
         return response or None
     except Exception as e:
