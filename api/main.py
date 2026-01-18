@@ -22,6 +22,7 @@ from api.agents.gemini_agent import start_agents
 from api.batch.visitor_analytics import start_analytics_scheduler
 from api.bus import EventBus
 from api.controllers.analytics_clicks import router as analytics_clicks_router
+from api.controllers.analytics_clicks_write import router as analytics_clicks_write_router
 from api.controllers.cache import router as cache_router
 from api.controllers.chat_history import router as chat_history_router
 from api.controllers.events_history import router as events_history_router
@@ -178,6 +179,7 @@ app.include_router(chat_history_router)
 app.include_router(events_history_router)
 app.include_router(visitor_analytics_router)
 app.include_router(analytics_clicks_router)
+app.include_router(analytics_clicks_write_router)
 app.include_router(when2meet_router, prefix="/w2m")
 app.include_router(notes_router)
 app.include_router(notes_search_router)
