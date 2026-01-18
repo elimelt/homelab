@@ -145,22 +145,21 @@ async def _run_augment_agent_loop(stop_event: asyncio.Event, agent_index: int = 
         sender, persona_name, channels, model, min_sleep, max_sleep
     )
 
-    first_run = True
+    stagger_base = int(_env("AUGMENT_AGENT_STAGGER_SEC", "1800"))
+    initial_delay = stagger_base * agent_index + random.randint(0, stagger_base // 2)
+    if initial_delay > 0:
+        _logger.info("[%s] Initial stagger delay: %ds", sender, initial_delay)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=initial_delay)
+            return
+        except asyncio.TimeoutError:
+            pass
+
     while not stop_event.is_set():
         try:
-            if not first_run:
-                sleep_time = random.randint(min_sleep, max_sleep)
-                _logger.debug("[%s] Sleeping for %ds", sender, sleep_time)
-
-                try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=sleep_time)
-                    break
-                except asyncio.TimeoutError:
-                    pass
-            first_run = False
-
             if state.event_bus is None:
                 _logger.debug("[%s] Skipping; event_bus not ready", sender)
+                await asyncio.sleep(10)
                 continue
 
             channel = random.choice(channels)
@@ -169,18 +168,24 @@ async def _run_augment_agent_loop(stop_event: asyncio.Event, agent_index: int = 
             history = await _fetch_recent_messages_by_tokens(channel, token_limit)
             if not history:
                 _logger.debug("[%s] No history found for channel=%s", sender, channel)
-                continue
-
-            prompt = _build_prompt(channel, history, sender, persona_key)
-
-            text = await asyncio.to_thread(_call_augment_sync, api_token, model, prompt)
-
-            if text:
-                _logger.info("[%s] Generated response len=%d", sender, len(text))
-                event = build_chat_message(channel=channel, sender=sender, text=text)
-                await publish_chat_message(state.event_bus, channel, event)
             else:
-                _logger.warning("[%s] No response from Augment", sender)
+                prompt = _build_prompt(channel, history, sender, persona_key)
+                text = await asyncio.to_thread(_call_augment_sync, api_token, model, prompt)
+
+                if text:
+                    _logger.info("[%s] Generated response len=%d", sender, len(text))
+                    event = build_chat_message(channel=channel, sender=sender, text=text)
+                    await publish_chat_message(state.event_bus, channel, event)
+                else:
+                    _logger.warning("[%s] No response from Augment", sender)
+
+            sleep_time = random.randint(min_sleep, max_sleep)
+            _logger.debug("[%s] Sleeping for %ds until next message", sender, sleep_time)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=sleep_time)
+                break
+            except asyncio.TimeoutError:
+                pass
 
         except Exception:
             _logger.exception("[%s] Error in agent loop", sender)
