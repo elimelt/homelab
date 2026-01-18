@@ -9,15 +9,6 @@ def test_health(client):
     assert body["redis"] == "healthy"
 
 
-def test_example(client):
-    res = client.get("/example")
-    assert res.status_code == 200
-    data = res.json()
-    assert data["message"] == "Hello from DevStack API!"
-    assert data["status"] == "success"
-    assert "timestamp" in data
-
-
 def test_cache_set(internal_client):
     key = "greeting"
     payload = {"value": "hello", "ttl": 5}
@@ -29,9 +20,9 @@ def test_cache_set(internal_client):
     assert body_set["value"] == payload["value"]
 
 
-def test_cache_get(client):
+def test_cache_get(internal_client):
     key = "nonexistent"
-    res_get = client.get(f"/cache/{key}")
+    res_get = internal_client.get(f"/cache/{key}")
     assert res_get.status_code == 200
     body_get = res_get.json()
     assert body_get["found"] is False

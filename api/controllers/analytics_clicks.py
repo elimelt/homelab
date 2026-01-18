@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from api import db
 from api.models.analytics import ClickEventsResponse
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(tags=["clicks"])
 
 _logger = logging.getLogger("api.analytics.clicks")
 if not _logger.handlers:
@@ -27,7 +27,7 @@ class ClickEventsBatchRequest(BaseModel):
     )
 
 
-@router.get("/analytics/clicks", response_model=ClickEventsResponse)
+@router.get("/clicks/analytics", response_model=ClickEventsResponse)
 async def get_click_events(
     start_date: str | None = Query(
         None,
@@ -70,7 +70,7 @@ async def get_click_events(
         return {"events": [], "count": 0, "error": str(e)}
 
 
-@router.post("/analytics/clicks", status_code=202)
+@router.post("/clicks/analytics", status_code=202)
 async def receive_click_events(request: Request, body: ClickEventsBatchRequest) -> dict[str, Any]:
     client_ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
     if "," in client_ip:

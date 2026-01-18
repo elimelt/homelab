@@ -44,7 +44,7 @@ class TestPostAnalyticsClicks:
             ],
         }
 
-        response = internal_client.post("/analytics/clicks", json=payload)
+        response = internal_client.post("/clicks/analytics", json=payload)
 
         assert response.status_code == 202
         body = response.json()
@@ -61,7 +61,7 @@ class TestPostAnalyticsClicks:
 
         payload = {"topic": "clicks", "events": []}
 
-        response = internal_client.post("/analytics/clicks", json=payload)
+        response = internal_client.post("/clicks/analytics", json=payload)
 
         assert response.status_code == 202
         body = response.json()
@@ -85,7 +85,7 @@ class TestPostAnalyticsClicks:
         }
 
         response = internal_client.post(
-            "/analytics/clicks",
+            "/clicks/analytics",
             json=payload,
             headers={"x-forwarded-for": "192.168.1.100, 10.0.0.1"},
         )
@@ -103,7 +103,7 @@ class TestPostAnalyticsClicks:
             "events": [{"ts": 1704067200000, "seq": 1}],
         }
 
-        response = internal_client.post("/analytics/clicks", json=payload)
+        response = internal_client.post("/clicks/analytics", json=payload)
 
         assert response.status_code == 202
         body = response.json()
@@ -121,7 +121,7 @@ class TestGetAnalyticsClicks:
         mock_fetch = AsyncMock(return_value=mock_events)
         monkeypatch.setattr(db, "fetch_click_events", mock_fetch)
 
-        response = client.get("/analytics/clicks")
+        response = client.get("/clicks/analytics")
 
         assert response.status_code == 200
         body = response.json()
@@ -137,7 +137,7 @@ class TestGetAnalyticsClicks:
         monkeypatch.setattr(db, "fetch_click_events", mock_fetch)
 
         response = client.get(
-            "/analytics/clicks",
+            "/clicks/analytics",
             params={
                 "start_date": "2024-01-01T00:00:00Z",
                 "end_date": "2024-01-02T00:00:00Z",
@@ -164,7 +164,7 @@ class TestGetAnalyticsClicks:
         mock_fetch = AsyncMock(side_effect=Exception("Database query failed"))
         monkeypatch.setattr(db, "fetch_click_events", mock_fetch)
 
-        response = client.get("/analytics/clicks")
+        response = client.get("/clicks/analytics")
 
         assert response.status_code == 200
         body = response.json()

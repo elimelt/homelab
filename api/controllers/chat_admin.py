@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from api import db
 from api.models.chat import SoftDeleteResponse
 
-router = APIRouter(tags=["chat"])
+router = APIRouter(tags=["admin"])
 
 
 class SoftDeleteRequest(BaseModel):

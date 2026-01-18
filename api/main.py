@@ -23,11 +23,9 @@ from api.errors import register_exception_handlers
 from api.batch.visitor_analytics import start_analytics_scheduler
 from api.bus import EventBus
 from api.controllers.analytics_clicks import router as analytics_clicks_router
-from api.controllers.cache import router as cache_router
 from api.controllers.chat_analytics import router as chat_analytics_router
 from api.controllers.chat_history import router as chat_history_router
 from api.controllers.events_history import router as events_history_router
-from api.controllers.example import router as example_router
 from api.controllers.health import router as health_router
 from api.controllers.notes import router as notes_router
 from api.controllers.notes_search import router as notes_search_router
@@ -157,8 +155,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app.router.lifespan_context = lifespan
 
 app.include_router(health_router)
-app.include_router(example_router)
-app.include_router(cache_router)
 app.include_router(visitors_router)
 app.include_router(system_router)
 app.include_router(ws_visitors_router)
