@@ -1,72 +1,17 @@
 import json
 import logging
-import os
 import secrets
 import string
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-import psycopg
 from psycopg import errors as pg_errors
 from psycopg.types.json import Json
-from psycopg_pool import AsyncConnectionPool
+
+# Import pool management from the centralized core module
+from api.db.core import _get_connection, close_pool, init_pool
 
 _logger = logging.getLogger(__name__)
-
-# Global connection pool
-_pool: AsyncConnectionPool | None = None
-
-
-def _dsn_from_env() -> str:
-    host = os.getenv("POSTGRES_HOST", os.getenv("PGHOST", "postgres"))
-    port = int(os.getenv("POSTGRES_PORT", os.getenv("PGPORT", "5432")))
-    user = os.getenv("POSTGRES_USER", os.getenv("PGUSER", "devuser"))
-    password = os.getenv("POSTGRES_PASSWORD", os.getenv("PGPASSWORD", ""))
-    dbname = os.getenv("POSTGRES_DB", os.getenv("PGDATABASE", "devdb"))
-    return (
-        f"host={host} port={port} user={user} password={password} dbname={dbname} sslmode=disable"
-    )
-
-
-async def init_pool() -> None:
-    global _pool
-    if _pool is not None:
-        return
-    dsn = _dsn_from_env()
-    min_size = int(os.getenv("POSTGRES_POOL_MIN_SIZE", "2"))
-    max_size = int(os.getenv("POSTGRES_POOL_MAX_SIZE", "10"))
-    _pool = AsyncConnectionPool(
-        dsn,
-        min_size=min_size,
-        max_size=max_size,
-        open=False,
-    )
-    await _pool.open()
-    _logger.info(f"Database connection pool initialized (min={min_size}, max={max_size})")
-    await _ensure_schema()
-
-
-async def close_pool() -> None:
-    global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
-        _logger.info("Database connection pool closed")
-
-
-@asynccontextmanager
-async def _get_connection(autocommit: bool = True):
-    global _pool
-    if _pool is not None:
-        async with _pool.connection() as conn:
-            if autocommit:
-                await conn.set_autocommit(True)
-            yield conn
-    else:
-        dsn = _dsn_from_env()
-        async with await psycopg.AsyncConnection.connect(dsn, autocommit=autocommit) as conn:
-            yield conn
 
 
 async def _ensure_schema() -> None:

@@ -6,8 +6,8 @@ from api.controllers.notes_search import (
     get_embedding_status,
     compute_hybrid_scores,
     SearchMode,
+    generate_embeddings,
 )
-from api.controllers.notes_search_write import generate_embeddings
 
 
 class TestComputeHybridScores:

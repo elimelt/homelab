@@ -56,7 +56,7 @@ def create_mock_connection(cursor_results=None):
 class TestNotesUpsertDocument:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -134,7 +134,7 @@ class TestNotesUpsertDocument:
 class TestNotesFetchDocuments:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -181,7 +181,7 @@ class TestNotesFetchDocuments:
 class TestNotesGetDocumentById:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -215,7 +215,7 @@ class TestNotesGetDocumentById:
 class TestNotesDeleteDocumentsNotIn:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -242,7 +242,7 @@ class TestNotesDeleteDocumentsNotIn:
 class TestNotesGetAllTags:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -273,7 +273,7 @@ class TestNotesGetAllTags:
 class TestNotesGetAllCategories:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestNotesGetAllCategories:
 class TestNotesGetCategoryByName:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -336,7 +336,7 @@ class TestNotesGetCategoryByName:
 class TestNotesGetTagByName:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -366,7 +366,7 @@ class TestNotesGetTagByName:
 class TestNotesGetLastSyncSha:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -395,7 +395,7 @@ class TestNotesGetLastSyncSha:
 class TestNotesCountDocuments:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -448,7 +448,7 @@ class TestNotesCountDocuments:
 class TestNotesGetOrCreateCategory:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio
@@ -480,7 +480,7 @@ class TestNotesGetOrCreateCategory:
 class TestNotesGetOrCreateTag:
     @pytest.fixture
     def mock_psycopg(self):
-        with patch("api.db.psycopg.AsyncConnection") as mock:
+        with patch("api.db.core.psycopg.AsyncConnection") as mock:
             yield mock
 
     @pytest.mark.asyncio

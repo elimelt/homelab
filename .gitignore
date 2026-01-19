@@ -56,3 +56,5 @@ htmlcov/
 # Node (if any frontend tools)
 node_modules/
 .npm/
+
+backup*

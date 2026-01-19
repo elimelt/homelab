@@ -84,7 +84,6 @@ services:
     image: redis:${REDIS_VERSION:-7-alpine}
     container_name: redis
     restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
@@ -239,15 +238,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - CORS_ORIGINS=${API_CORS_ORIGINS:-http://localhost:3000,https://elimelt.com}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - AUGMENT_API_TOKEN=${AUGMENT_API_TOKEN}
-      - AGENTS=${AGENTS:-5}
-      - AGENT_MIN_SLEEP_SEC=${AGENT_MIN_SLEEP_SEC:-30}
-      - AGENT_MAX_SLEEP_SEC=${AGENT_MAX_SLEEP_SEC:-120}
-      - AGENT_WAKE_PROB=${AGENT_WAKE_PROB:-0.2}
-      - AGENT_WAKE_COOLDOWN_SEC=${AGENT_WAKE_COOLDOWN_SEC:-45}
-      - AGENT_DEBUG=${AGENT_DEBUG:-0}
-      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
       - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-200}
       - REDIS_POOL_TIMEOUT_SEC=${REDIS_POOL_TIMEOUT_SEC:-5}
       - REDIS_DEBUG=${REDIS_DEBUG:-0}
@@ -255,9 +245,7 @@ services:
       - WS_DEBUG=${WS_DEBUG:-0}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - ENABLE_CHAT_DB=1
-      - ENABLE_AGENT=${ENABLE_AGENT:-1}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER:-devuser}
@@ -282,9 +270,17 @@ services:
     environment:
       - AUGMENT_API_TOKEN=${AUGMENT_API_TOKEN}
       - AUGMENT_SESSION_AUTH=${AUGMENT_API_TOKEN}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AGENTS=${AGENTS:-5}
+      - AGENT_MIN_SLEEP_SEC=${AGENT_MIN_SLEEP_SEC:-30}
+      - AGENT_MAX_SLEEP_SEC=${AGENT_MAX_SLEEP_SEC:-120}
+      - AGENT_WAKE_PROB=${AGENT_WAKE_PROB:-0.2}
+      - AGENT_WAKE_COOLDOWN_SEC=${AGENT_WAKE_COOLDOWN_SEC:-45}
+      - AGENT_DEBUG=${AGENT_DEBUG:-0}
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
+      - ENABLE_GEMINI_AGENT=${ENABLE_GEMINI_AGENT:-1}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-50}
       - ENABLE_CHAT_DB=1
       - POSTGRES_HOST=postgres
