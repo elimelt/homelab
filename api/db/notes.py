@@ -6,6 +6,15 @@ from typing import Any
 from api.db.core import _get_connection
 
 
+async def _fetch_tags_for_document(conn, document_id: int) -> list[str]:
+    """Fetch tag names for a document."""
+    tag_rows = await conn.execute(
+        "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
+        (document_id,),
+    )
+    return [t[0] async for t in tag_rows]
+
+
 async def notes_get_or_create_category(name: str) -> int:
     """Get or create a category by name, returns the category id."""
     async with _get_connection() as conn:
@@ -187,11 +196,7 @@ async def notes_fetch_documents(
         rows = await conn.execute(sql, tuple(params))
         result: list[dict[str, Any]] = []
         async for row in rows:
-            tag_rows = await conn.execute(
-                "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
-                (row[0],),
-            )
-            tags = [t[0] async for t in tag_rows]
+            tags = await _fetch_tags_for_document(conn, row[0])
 
             result.append(
                 {
@@ -259,11 +264,7 @@ async def notes_get_document_by_id(doc_id: int) -> dict[str, Any] | None:
         if not row:
             return None
 
-        tag_rows = await conn.execute(
-            "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
-            (row[0],),
-        )
-        tags = [t[0] async for t in tag_rows]
+        tags = await _fetch_tags_for_document(conn, row[0])
 
         return {
             "id": row[0],
@@ -405,11 +406,7 @@ async def notes_get_documents_by_ids(doc_ids: list[int]) -> list[dict[str, Any]]
         )
         result: list[dict[str, Any]] = []
         async for row in rows:
-            tag_rows = await conn.execute(
-                "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
-                (row[0],),
-            )
-            tags = [t[0] async for t in tag_rows]
+            tags = await _fetch_tags_for_document(conn, row[0])
             result.append(
                 {
                     "id": row[0],
@@ -466,11 +463,7 @@ async def notes_fulltext_search(
         rows = await conn.execute(sql, tuple(params_with_rank))
         result: list[dict[str, Any]] = []
         async for row in rows:
-            tag_rows = await conn.execute(
-                "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
-                (row[0],),
-            )
-            tags = [t[0] async for t in tag_rows]
+            tags = await _fetch_tags_for_document(conn, row[0])
             result.append(
                 {
                     "id": row[0],
@@ -529,11 +522,7 @@ async def notes_vector_search(
         rows = await conn.execute(sql, tuple(all_params))
         result: list[dict[str, Any]] = []
         async for row in rows:
-            tag_rows = await conn.execute(
-                "SELECT t.name FROM notes_tags t JOIN notes_document_tags dt ON t.id = dt.tag_id WHERE dt.document_id = %s",
-                (row[0],),
-            )
-            tags = [t[0] async for t in tag_rows]
+            tags = await _fetch_tags_for_document(conn, row[0])
             result.append(
                 {
                     "id": row[0],

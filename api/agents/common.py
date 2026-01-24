@@ -52,16 +52,28 @@ DAILY_LIMIT_KEY = "agent:daily_request_count"
 DAILY_LIMIT_DATE_KEY = "agent:daily_request_date"
 
 
+async def _ensure_daily_limit_date_is_current() -> bool:
+    """Ensure daily limit date is current, resetting count if needed.
+
+    Returns True if date was reset (count is now 0), False if already current.
+    """
+    if state.redis_client is None:
+        return False
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    stored_date = await state.redis_client.get(DAILY_LIMIT_DATE_KEY)
+    if stored_date != today:
+        await state.redis_client.set(DAILY_LIMIT_DATE_KEY, today)
+        await state.redis_client.set(DAILY_LIMIT_KEY, "0")
+        return True
+    return False
+
+
 async def get_daily_request_count() -> int:
     """Get the current daily request count from Redis."""
     if state.redis_client is None:
         return 0
     try:
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        stored_date = await state.redis_client.get(DAILY_LIMIT_DATE_KEY)
-        if stored_date != today:
-            await state.redis_client.set(DAILY_LIMIT_DATE_KEY, today)
-            await state.redis_client.set(DAILY_LIMIT_KEY, "0")
+        if await _ensure_daily_limit_date_is_current():
             return 0
         count = await state.redis_client.get(DAILY_LIMIT_KEY)
         return int(count) if count else 0
@@ -74,12 +86,7 @@ async def increment_daily_request_count() -> int:
     if state.redis_client is None:
         return 0
     try:
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        stored_date = await state.redis_client.get(DAILY_LIMIT_DATE_KEY)
-        if stored_date != today:
-            await state.redis_client.set(DAILY_LIMIT_DATE_KEY, today)
-            await state.redis_client.set(DAILY_LIMIT_KEY, "1")
-            return 1
+        await _ensure_daily_limit_date_is_current()
         new_count = await state.redis_client.incr(DAILY_LIMIT_KEY)
         return int(new_count)
     except Exception:
