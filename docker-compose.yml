@@ -84,10 +84,27 @@ services:
     image: redis:${REDIS_VERSION:-7-alpine}
     container_name: redis
     restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1 --save 300 10 --save 60 10000
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --maxclients 10000
+      --slowlog-log-slower-than 10000
+      --slowlog-max-len 128
     volumes:
       - redis_data:/data
     networks:
       - dev_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   grafana:
     image: grafana/grafana:${GRAFANA_VERSION:-latest}
