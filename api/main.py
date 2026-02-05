@@ -41,6 +41,7 @@ from api.redis_debug import wrap_redis_client
 app = FastAPI(
     title="Public API",
     version="1.0.0",
+    root_path=os.getenv("API_ROOT_PATH", ""),
     swagger_ui_parameters={
         "requestSnippetsEnabled": True,
         "requestSnippets": {
