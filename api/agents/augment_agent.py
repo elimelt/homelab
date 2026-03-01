@@ -5,6 +5,7 @@ in chat conversations, with access to notes search and Python execution tools.
 """
 
 import asyncio
+import asyncio.exceptions
 import logging
 from datetime import datetime
 
@@ -92,6 +93,14 @@ class AugmentAgent(BaseAgent):
             response = client.run(prompt, return_type=str, functions=CUSTOM_TOOLS)
             self.logger.debug("Auggie response: %s", response[:200] if response else None)
             return response or None
+        except (asyncio.exceptions.LimitOverrunError, ValueError) as e:
+            # Handle chunk size limit errors from the SDK's async readline
+            if "chunk is longer than limit" in str(e):
+                self.logger.warning(
+                    "Augment API response exceeded chunk limit, skipping: %s", e
+                )
+                return None
+            raise
         except Exception as e:
             import traceback
 
